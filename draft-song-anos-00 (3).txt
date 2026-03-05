@@ -1,0 +1,896 @@
+
+
+
+
+Network Automation                                               H. Song
+Internet-Draft                                    Futurewei Technologies
+Intended status: Informational                              5 March 2026
+Expires: 6 September 2026
+
+
+A Framework for Agentic Network Management using Model Context Protocol
+                      and Agent-to-Agent Protocol
+                           draft-song-anos-00
+
+Abstract
+
+   This document defines a reference architecture for an Agentic Network
+   Operating System (ANOS), moving network management from deterministic
+   automation to intent-driven autonomous operation.  It specifies the
+   application of the Model Context Protocol (MCP) [MCP-SPEC] as a
+   standardized southbound interface for exposing network device
+   capabilities (YANG datastores, CLI, Telemetry) to AI agents.
+   Furthermore, it defines the usage of the Agent-to-Agent (A2A)
+   protocol [A2A-SPEC] for east-west coordination between specialized
+   expert agents.  Security mechanisms leveraging SPIFFE [SPIFFE-ID] for
+   workload identity and OAuth 2.0 for delegated authorization are also
+   described.
+
+   This document focuses on the system-level ANOS architectural
+   framework and the integration of security mechanisms.  For detailed
+   MCP protocol extensions for network devices, readers are referred to
+   [I-D.zw-opsawg-mcp-network-mgmt].  For the applicability analysis of
+   MCP and A2A, readers are referred to [I-D.zeng-opsawg-mcp-a2a] and
+   [I-D.yang-nmrg-mcp-nm].
+
+Status of This Memo
+
+   This Internet-Draft is submitted in full conformance with the
+   provisions of BCP 78 and BCP 79.
+
+   Internet-Drafts are working documents of the Internet Engineering
+   Task Force (IETF).  Note that other groups may also distribute
+   working documents as Internet-Drafts.  The list of current Internet-
+   Drafts is at https://datatracker.ietf.org/drafts/current/.
+
+   Internet-Drafts are draft documents valid for a maximum of six months
+   and may be updated, replaced, or obsoleted by other documents at any
+   time.  It is inappropriate to use Internet-Drafts as reference
+   material or to cite them other than as "work in progress."
+
+   This Internet-Draft will expire on 6 September 2026.
+
+
+
+
+Song                    Expires 6 September 2026                [Page 1]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+Copyright Notice
+
+   Copyright (c) 2026 IETF Trust and the persons identified as the
+   document authors.  All rights reserved.
+
+   This document is subject to BCP 78 and the IETF Trust's Legal
+   Provisions Relating to IETF Documents (https://trustee.ietf.org/
+   license-info) in effect on the date of publication of this document.
+   Please review these documents carefully, as they describe your rights
+   and restrictions with respect to this document.  Code Components
+   extracted from this document must include Revised BSD License text as
+   described in Section 4.e of the Trust Legal Provisions and are
+   provided without warranty as described in the Revised BSD License.
+
+Table of Contents
+
+   1.  Introduction  . . . . . . . . . . . . . . . . . . . . . . . .   2
+     1.1.  Requirements Language . . . . . . . . . . . . . . . . . .   3
+   2.  Terminology . . . . . . . . . . . . . . . . . . . . . . . . .   4
+   3.  Relationship to Existing Work . . . . . . . . . . . . . . . .   4
+   4.  Architecture Overview: Agentic Network Operating System . . .   5
+   5.  Southbound Interface: MCP Binding for Network Elements  . . .   7
+     5.1.  Capability Negotiation  . . . . . . . . . . . . . . . . .   7
+     5.2.  Resource URI Scheme . . . . . . . . . . . . . . . . . . .   8
+     5.3.  Tool Definitions and YANG Mapping . . . . . . . . . . . .   9
+     5.4.  Telemetry Streaming via SSE . . . . . . . . . . . . . . .  10
+   6.  East-West Interface: A2A Protocol Usage . . . . . . . . . . .  10
+     6.1.  Agent Card and Discovery  . . . . . . . . . . . . . . . .  10
+     6.2.  Task Negotiation  . . . . . . . . . . . . . . . . . . . .  11
+   7.  Security Considerations . . . . . . . . . . . . . . . . . . .  12
+     7.1.  Workload Identity (SPIFFE)  . . . . . . . . . . . . . . .  12
+     7.2.  Delegated Authorization (OAuth 2.0) . . . . . . . . . . .  12
+     7.3.  Prompt Injection Defense  . . . . . . . . . . . . . . . .  13
+   8.  IANA Considerations . . . . . . . . . . . . . . . . . . . . .  14
+   9.  References  . . . . . . . . . . . . . . . . . . . . . . . . .  14
+     9.1.  Normative References  . . . . . . . . . . . . . . . . . .  14
+     9.2.  Informative References  . . . . . . . . . . . . . . . . .  15
+   Author's Address  . . . . . . . . . . . . . . . . . . . . . . . .  16
+
+1.  Introduction
+
+   Traditional network automation relies on deterministic scripts and
+   static playbooks, which struggle to adapt to unknown fault scenarios
+   or ambiguous business intents.  Existing management protocols such as
+   NETCONF [RFC6241], SNMP, and gNMI operate on a paradigm where
+   intelligence resides in a centralized controller issuing imperative
+   commands to passive devices.  The limitations of this paradigm — high
+   latency for local events, inability to express goals rather than
+
+
+
+Song                    Expires 6 September 2026                [Page 2]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+   steps, and poor interoperability across technology domains — are
+   well-documented in [I-D.zeng-opsawg-mcp-a2a].
+
+   The emergence of Large Language Models (LLMs) enables "Agentic AI,"
+   where software agents possess reasoning, planning, and tool-use
+   capabilities.  This shift, and its motivation for network management,
+   is analyzed in [I-D.hong-nmrg-agenticai-ps].
+
+   However, integrating these agents with existing network
+   infrastructure faces two fundamental challenges:
+
+   *  Lack of standardized access for AI to real-time network state.
+
+   *  Inability of monolithic agents to scale across diverse technology
+      domains (IP, Optical, Security).
+
+   This document proposes a framework called the Agentic Network
+   Operating System (ANOS) that addresses these challenges at the
+   architecture level.  ANOS leverages:
+
+   *  The Model Context Protocol (MCP) [MCP-SPEC] to standardize the
+      southbound connection between AI agents and network devices.
+      Detailed MCP protocol extensions for network equipment are
+      specified in [I-D.zw-opsawg-mcp-network-mgmt]; this document
+      references that work and describes how it fits into the ANOS
+      layered architecture.
+
+   *  The Agent-to-Agent (A2A) protocol [A2A-SPEC] to enable
+      collaboration between distributed specialized expert agents via
+      the east-west interface.  The applicability of A2A to network
+      management agents is further discussed in
+      [I-D.yan-a2a-device-agent-applicability].
+
+   *  SPIFFE [SPIFFE-ID] and OAuth 2.0 [RFC8693] to address security
+      challenges specific to multi-agent network environments that have
+      not been fully addressed in existing drafts.
+
+1.1.  Requirements Language
+
+   The key words MUST, MUST NOT, REQUIRED, SHALL, SHALL NOT, SHOULD,
+   SHOULD NOT, RECOMMENDED, NOT RECOMMENDED, MAY, and OPTIONAL in this
+   document are to be interpreted as described in BCP 14 [RFC2119]
+   [RFC8174] when, and only when, they appear in all capitals, as shown
+   here.
+
+
+
+
+
+
+
+Song                    Expires 6 September 2026                [Page 3]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+2.  Terminology
+
+   MCP (Model Context Protocol)
+      A standard for connecting AI models to external data and tools via
+      Resources, Prompts, and Tools [MCP-SPEC].
+
+   A2A (Agent-to-Agent Protocol)
+      A protocol enabling discovery and message exchange between
+      autonomous AI agents [A2A-SPEC].
+
+   Agentic AI
+      AI systems capable of autonomous reasoning, planning, and
+      execution of multi-step tasks [I-D.hong-nmrg-agenticai-ps].
+
+   ANOS
+      Agentic Network Operating System.  The layered reference
+      architecture defined in this document.
+
+   SVID
+      SPIFFE Verifiable Identity Document.  A cryptographically
+      verifiable document carrying a SPIFFE ID, in X.509 certificate or
+      JWT token format [SPIFFE-ID].
+
+   SPIFFE ID
+      A URI of the form spiffe://<trust-domain>/<path> that uniquely
+      identifies a workload [SPIFFE-ID].
+
+   Orchestration Agent
+      A higher-level agent responsible for decomposing user intents and
+      delegating sub-tasks to specialized Expert Agents via A2A.
+
+   Expert Agent
+      A specialized agent with deep knowledge of a particular network
+      technology domain (e.g., IP routing, optical transport, security
+      policy).
+
+3.  Relationship to Existing Work
+
+   This section clarifies how ANOS relates to the cluster of MCP- and
+   A2A-related Internet-Drafts that have been submitted to IETF working
+   groups since mid-2025, and identifies the distinct contribution of
+   this document.
+
+   [I-D.yang-nmrg-mcp-nm] discusses the general applicability of MCP to
+   the network management plane, covering MCP for network exposure,
+   multi-MCP server discovery, and deployment scenarios.  ANOS builds on
+   that applicability analysis and places it within a concrete four-
+   layer architecture.
+
+
+
+Song                    Expires 6 September 2026                [Page 4]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+   [I-D.zw-opsawg-mcp-network-mgmt] specifies the detailed MCP protocol
+   extensions for network equipment, defining the serverCapabilities
+   object, tool names, resource URI schemes, and error codes.  This
+   document normatively references those definitions; the Southbound
+   Interface section (Section 5) provides a summary for completeness,
+   but implementations MUST conform to [I-D.zw-opsawg-mcp-network-mgmt]
+   for protocol-level detail.
+
+   [I-D.zeng-opsawg-mcp-a2a] provides a gap analysis of NETCONF and
+   presents MCP and A2A as complementary solutions.  ANOS adopts this
+   framing and operationalizes it into a deployable reference
+   architecture.
+
+   [I-D.yan-a2a-device-agent-applicability] discusses the applicability
+   of A2A between Controller Agents and Device Agents.  ANOS extends
+   this to address the east-west coordination between multiple
+   Orchestration and Expert Agents at the management layer, which
+   involves different trust and lifecycle considerations.
+
+   [I-D.hong-nmrg-agenticai-ps] establishes the problem statement and
+   motivation for Agentic AI in network management.  ANOS directly
+   addresses the architectural bottlenecks identified in that document.
+
+   The key contributions of this document that are NOT covered by the
+   above works are:
+
+   *  A named, layered ANOS reference architecture (L1-L4) integrating
+      MCP southbound and A2A east-west into a single operational model.
+
+   *  Specification of SPIFFE-based workload identity for MCP Client and
+      Server mutual authentication in a network management context.
+
+   *  Binding of the OAuth 2.0 On-Behalf-Of (OBO) flow [RFC8693] to the
+      ANOS trust chain, creating an auditable human-to-agent-to-device
+      authorization trail.
+
+   *  Definition of prompt injection defense requirements specific to
+      the network management context (Section 7.3).
+
+4.  Architecture Overview: Agentic Network Operating System
+
+   The Agentic Network Operating System (ANOS) architecture is defined
+   in four logical layers:
+
+
+
+
+
+
+
+
+Song                    Expires 6 September 2026                [Page 5]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+   L4: Intent Interaction Layer
+      Handles natural language input and intent decomposition
+      (Northbound).  Human operators or higher-level systems submit
+      intents in natural language or structured YAML/JSON.  This layer
+      hosts the LLM reasoning engine that translates intents into
+      structured sub-tasks.
+
+   L3: Orchestration Layer (A2A)
+      Manages the lifecycle of agents and inter-agent collaboration
+      using the A2A protocol (East-West).  The Orchestration Agent
+      decomposes tasks received from L4 and dispatches them to
+      appropriate Expert Agents discovered via A2A Agent Cards (see
+      Section 6.1).
+
+   L2: Model Context Layer (MCP Client)
+      Maintains state context and manages connections to infrastructure.
+      Expert Agents at this layer consume MCP Resources, invoke MCP
+      Tools, and receive MCP Notifications from the layer below.
+
+   L1: Infrastructure Abstraction Layer (MCP Server)
+      Exposes physical network capabilities as standardized MCP
+      primitives (Southbound).  Network devices or their proxy
+      controllers implement an MCP Server interface as specified in
+      [I-D.zw-opsawg-mcp-network-mgmt].
+
+   The following diagram illustrates the data flow between layers:
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Song                    Expires 6 September 2026                [Page 6]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+     +-----------------------------------------+
+     |  L4: Intent Interaction Layer           |
+     |  (Natural Language / LLM Reasoning)     |
+     +------------------+----------------------+
+                        | Intent decomposition
+     +------------------v----------------------+
+     |  L3: Orchestration Layer (A2A)          |
+     |  Orchestration Agent <-> Expert Agents  |
+     +---+-----------------+-------------------+
+         | MCP Client      | MCP Client
+     +---v--------+    +---v--------+
+     | L2: Model  |    | L2: Model  |
+     | Context    | .. | Context    |
+     | Layer      |    | Layer      |
+     | (Expert    |    | (Expert    |
+     |  Agent)    |    |  Agent)    |
+     +---+--------+    +---+--------+
+         | MCP Tools/Resources  | MCP Tools/Resources
+     +---v--------+    +---v--------+
+     | L1: MCP    |    | L1: MCP    |
+     | Server     | .. | Server     |
+     | (Device)   |    | (Device)   |
+     +------------+    +------------+
+
+                    Figure 1: ANOS Layered Architecture
+
+5.  Southbound Interface: MCP Binding for Network Elements
+
+   Network devices or their proxy controllers MUST implement an MCP
+   Server interface as specified in [I-D.zw-opsawg-mcp-network-mgmt] to
+   expose configuration and operational data.  This section summarizes
+   the key primitives; the authoritative normative definitions are in
+   [I-D.zw-opsawg-mcp-network-mgmt].
+
+5.1.  Capability Negotiation
+
+   Upon initialization, the MCP Server MUST declare its network-specific
+   capabilities in the serverCapabilities object.  This allows the MCP
+   Client (Expert Agent) to adapt its tool invocation strategy (e.g.,
+   YANG-based vs. CLI-based).  The capability object MUST follow the
+   schema defined in [I-D.zw-opsawg-mcp-network-mgmt], Section 3.  An
+   example is shown below for informational purposes:
+
+
+
+
+
+
+
+
+
+Song                    Expires 6 September 2026                [Page 7]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+   {
+     "capabilities": {
+       "network": {
+         "yangModules": ["ietf-interfaces", "openconfig-bgp"],
+         "cliDialect": "cisco-ios-xr",
+         "configDatastore": ["running", "candidate", "operational"],
+         "notificationStream": ["syslog", "netconf-stream"],
+         "maxBulkEdit": 500,
+         "supportsRollback": true,
+         "rollbackTimeout": 300
+       }
+     }
+   }
+
+            Figure 2: Example Capability Object (Informational)
+
+   The maxBulkEdit field allows the Expert Agent to chunk large
+   configuration changes appropriately.  The rollbackTimeout field
+   enables confirmed-commit workflows where the device automatically
+   rolls back if the commit is not confirmed within the specified
+   interval.
+
+5.2.  Resource URI Scheme
+
+   The server MUST expose network state as MCP Resources using the
+   network:/// URI scheme as defined in
+   [I-D.zw-opsawg-mcp-network-mgmt].  Resources MUST support the read
+   operation and SHOULD support subscribe for state changes.
+
+   Standard URI Templates (normative definitions in
+   [I-D.zw-opsawg-mcp-network-mgmt]):
+
+   *  network:///interfaces: Summary list of interfaces.
+
+   *  network:///interface/{name}/config: Configuration of a specific
+      interface.
+
+   *  network:///routing/bgp/neighbors: BGP neighbor table.
+
+   *  network:///logs/syslog: Buffer of recent system logs.
+
+   The MIME type for YANG-modeled resources MUST be application/yang-
+   data+json [RFC7951].
+
+
+
+
+
+
+
+
+Song                    Expires 6 September 2026                [Page 8]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+5.3.  Tool Definitions and YANG Mapping
+
+   The MCP Server MUST expose atomic network operations as MCP Tools.
+   Agents MUST NOT generate raw protocol streams (e.g., raw SSH bytes)
+   but instead invoke these tools.  The following tools are defined in
+   [I-D.zw-opsawg-mcp-network-mgmt] and summarized here; ANOS Expert
+   Agents MUST implement support for invoking all applicable tools.
+
+   network.yang.get
+      Arguments: xpath (string), datastore (enum).  Returns: JSON
+      structure of the requested YANG data, conformant to the device's
+      advertised YANG modules [RFC7950].
+
+   network.yang.edit
+      Arguments: target (enum: candidate/running), config (JSON object).
+      Maps to NETCONF <edit-config> [RFC6241].  The config argument MUST
+      validate against the device's advertised YANG modules before
+      submission.
+
+   network.commit
+      Arguments: confirmed (boolean), confirm_timeout (integer).
+      Initiates a confirmed commit.  If confirmed is true and no
+      subsequent network.commit (without confirmed) is received within
+      confirm_timeout seconds, the device MUST automatically roll back
+      the configuration.
+
+   network.rollback
+      Arguments: none.  Cancels a pending confirmed commit and triggers
+      an automatic rollback.
+
+   network.cli.exec
+      Arguments: commands (array of strings).  Executes read-only
+      operational CLI commands (e.g., "show" commands).  MUST NOT modify
+      device state.  This tool is provided for operational visibility
+      for features not yet covered by YANG.
+
+   network.cli.configure
+      Arguments: commands (array of strings).  Executes configuration
+      CLI commands.  This tool is a fallback mechanism for configuration
+      features not covered by YANG, and SHOULD only be used when
+      network.yang.edit is insufficient.  Use of this tool MUST be
+      logged with full audit context.
+
+
+
+
+
+
+
+
+
+Song                    Expires 6 September 2026                [Page 9]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+5.4.  Telemetry Streaming via SSE
+
+   For real-time observability, MCP Servers SHOULD utilize Server-Sent
+   Events (SSE) to push notifications to MCP Clients.  The server MUST
+   translate NETCONF Notifications [RFC5277] or SNMP Traps into MCP
+   notifications/message events.
+
+   This capability enables "Triggered Reasoning," where an unsolicited
+   network event (e.g., a BGP session down notification) actively wakes
+   an idle Expert Agent.  The Expert Agent receiving a triggered
+   notification SHOULD first query relevant MCP Resources to establish
+   full context before invoking any corrective tools.
+
+   The sequence of triggered reasoning is:
+
+   1.  MCP Server pushes SSE notification (e.g., BGP peer down).
+
+   2.  Expert Agent receives notification and invokes network.yang.get
+       to retrieve current BGP state.
+
+   3.  Expert Agent's LLM analyzes the context and determines a
+       remediation action.
+
+   4.  Expert Agent invokes network.yang.edit with confirmed=true.
+
+   5.  Expert Agent validates the result and invokes network.commit to
+       confirm, or network.rollback to revert.
+
+6.  East-West Interface: A2A Protocol Usage
+
+   To support distributed management across diverse technology domains,
+   specialized Expert Agents (e.g., IP Agent, Optical Agent, Security
+   Agent) communicate via A2A [A2A-SPEC].  This section specifies how
+   ANOS employs A2A; the general applicability of A2A to network
+   management is further discussed in
+   [I-D.yan-a2a-device-agent-applicability].
+
+6.1.  Agent Card and Discovery
+
+   Each Expert Agent MUST publish an Agent Card at /.well-known/agent-
+   card.json as defined in [A2A-SPEC].  This metadata file enables
+   dynamic discovery and capability matching by the Orchestration Agent.
+
+
+
+
+
+
+
+
+
+Song                    Expires 6 September 2026               [Page 10]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+   {
+     "identity": {
+       "name": "IP-Routing-Specialist",
+       "provider": "NetOps-Org",
+       "version": "1.0.0"
+     },
+     "capabilities": [
+       "analyze_bgp_routes",
+       "optimize_ospf_metrics"
+     ],
+     "inputs": {
+       "analyze_bgp_routes": {
+         "required": ["target_prefix", "peer_ip"]
+       },
+       "optimize_ospf_metrics": {
+         "required": ["area_id"],
+         "optional": ["cost_policy"]
+       }
+     },
+     "authentication": {
+       "schemes": ["spiffe-mtls"]
+     }
+   }
+
+                        Figure 3: Example Agent Card
+
+   The authentication field SHOULD declare the supported identity
+   verification scheme.  ANOS requires spiffe-mtls as defined in
+   Section 7.1.
+
+6.2.  Task Negotiation
+
+   Agents utilizing A2A MUST support the Negotiation response type as
+   defined in [A2A-SPEC].  If a received task is ambiguous (e.g., "Fix
+   the network"), the receiving Expert Agent SHOULD return a negotiation
+   request asking for clarification (e.g., "Specify the affected region
+   or service ID").
+
+   The Orchestration Agent (L3) MUST NOT forward ambiguous tasks
+   directly to network devices (L1).  Ambiguity MUST be resolved either
+   through A2A negotiation with the Expert Agent, or by escalating back
+   to the L4 Intent Interaction Layer for human clarification.
+
+
+
+
+
+
+
+
+
+Song                    Expires 6 September 2026               [Page 11]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+7.  Security Considerations
+
+   The ANOS security model is built on three complementary mechanisms:
+   workload identity (Section 7.1), delegated authorization
+   (Section 7.2), and prompt injection defense (Section 7.3).  General
+   security requirements for AI agents are further discussed in
+   [I-D.ni-a2a-agent-security].
+
+7.1.  Workload Identity (SPIFFE)
+
+   In a zero-trust network management environment, IP-based whitelisting
+   is insufficient and fragile.  ANOS mandates the use of SPIFFE
+   [SPIFFE-ID] for workload identity for all components.
+
+   All MCP Clients (Expert Agents) and MCP Servers (network device
+   proxies) MUST be assigned SPIFFE IDs of the form:
+
+     spiffe://<trust-domain>/anos/<component-type>/<instance-id>
+
+   For example:
+
+     spiffe://netops.example.com/anos/expert-agent/ip-routing-01
+     spiffe://netops.example.com/anos/mcp-server/router-core-01
+
+   All MCP transport connections MUST use mutual TLS (mTLS) with
+   X.509-SVIDs [SPIFFE-X509].  The MCP Server MUST validate the client
+   SVID against the configured trust domain before processing any tool
+   invocation or resource subscription request.
+
+   Similarly, A2A connections between agents MUST use mTLS with
+   X.509-SVIDs.  The Orchestration Agent MUST verify the SPIFFE ID of an
+   Expert Agent's Agent Card endpoint before dispatching tasks.
+
+7.2.  Delegated Authorization (OAuth 2.0)
+
+   To prevent "Confused Deputy" attacks — where an agent uses its own
+   credentials to perform actions beyond what was intended by the
+   originating human operator — ANOS MUST implement the OAuth 2.0 On-
+   Behalf-Of (OBO) token exchange flow as defined in [RFC8693].
+
+   The authorization chain in ANOS is as follows:
+
+   1.  The human operator authenticates to the ANOS management portal
+       and receives a User Token scoped to their authorized operations
+       (e.g., network.read, network.write).
+
+
+
+
+
+
+Song                    Expires 6 September 2026               [Page 12]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+   2.  The Orchestration Agent (L3) exchanges the User Token for a
+       downstream token via the OBO flow.  The resulting token is scoped
+       to the specific sub-task and bound to the Agent's SPIFFE ID.
+
+   3.  The Expert Agent (L2) further exchanges the token for a device-
+       specific token when invoking MCP Tools on the MCP Server (L1).
+
+   4.  The MCP Server MUST validate that the token:
+
+       a.  Contains the necessary permission scopes (e.g., network.write
+           for network.yang.edit).
+
+       b.  Is bound to the presenting agent's SPIFFE ID via the cnf
+           (confirmation) claim.
+
+       c.  Is associated with a valid human identity audit trail,
+           traceable back to the original User Token.
+
+   This chain ensures that every configuration change applied to a
+   network device is attributable to a specific human operator action,
+   which is a critical requirement for compliance and post-incident
+   forensics.
+
+7.3.  Prompt Injection Defense
+
+   Network management data (device logs, interface descriptions, BGP
+   community strings, YANG node values) may contain adversarially
+   crafted content designed to manipulate the LLM reasoning engine
+   within an Expert Agent.  This attack vector, known as prompt
+   injection, is particularly dangerous in network management because it
+   could cause an agent to execute unauthorized configuration changes.
+
+   ANOS implementations MUST apply the following defenses:
+
+   *  *Data Isolation:*
+
+      The Expert Agent's LLM context MUST clearly distinguish between
+      trusted control data (MCP Tool schemas, operator intent from L4)
+      and untrusted observation data (MCP Resource contents, device log
+      strings).  Untrusted data MUST NOT be placed in the system prompt.
+
+   *  *Output Validation:*
+
+      Tool invocation arguments generated by the LLM reasoning engine
+      MUST be validated against the JSON Schema of the target MCP Tool
+      before dispatch.  Arguments that fail schema validation MUST be
+      rejected and escalated.
+
+
+
+
+Song                    Expires 6 September 2026               [Page 13]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+   *  *Scope Limiting:*
+
+      The OAuth 2.0 token presented to the MCP Server MUST be scoped to
+      the minimum necessary permissions for the current task.  This
+      limits the blast radius of a successful injection attack.
+
+   These requirements are consistent with the general agent security
+   guidance in [I-D.ni-a2a-agent-security].
+
+8.  IANA Considerations
+
+   This document requests the registration of the URI scheme network for
+   use with MCP Resource URIs in network management contexts, in
+   coordination with [I-D.zw-opsawg-mcp-network-mgmt].
+
+   This document does not request any new MCP tool namespace
+   registrations; all tool names defined herein (network.*) are
+   specified in [I-D.zw-opsawg-mcp-network-mgmt].
+
+9.  References
+
+9.1.  Normative References
+
+   [A2A-SPEC] Agent2Agent Protocol Specification Authors, "Agent2Agent
+              (A2A) Protocol Specification", 2025,
+              <https://github.com/google/A2A>.
+
+   [I-D.zw-opsawg-mcp-network-mgmt]
+              Zeng, G. and J. Wu, "Model Context Protocol (MCP)
+              Extensions for Network Equipment Management", Work in
+              Progress, Internet-Draft, draft-zw-opsawg-mcp-network-
+              mgmt-00, November 2025, <https://datatracker.ietf.org/doc/
+              draft-zw-opsawg-mcp-network-mgmt/>.
+
+   [MCP-SPEC] Model Context Protocol Specification Authors, "Model
+              Context Protocol (MCP) Specification", March 2025,
+              <https://modelcontextprotocol.io/
+              specification/2025-03-26>.
+
+   [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
+              Requirement Levels", BCP 14, RFC 2119,
+              DOI 10.17487/RFC2119, March 1997,
+              <https://www.rfc-editor.org/info/rfc2119>.
+
+   [RFC6241]  Enns, R., Ed., Bjorklund, M., Ed., Schoenwaelder, J., Ed.,
+              and A. Bierman, Ed., "Network Configuration Protocol
+              (NETCONF)", RFC 6241, DOI 10.17487/RFC6241, June 2011,
+              <https://www.rfc-editor.org/info/rfc6241>.
+
+
+
+Song                    Expires 6 September 2026               [Page 14]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+   [RFC7950]  Bjorklund, M., Ed., "The YANG 1.1 Data Modeling Language",
+              RFC 7950, DOI 10.17487/RFC7950, August 2016,
+              <https://www.rfc-editor.org/info/rfc7950>.
+
+   [RFC7951]  Lhotka, L., "JSON Encoding of Data Modeled with YANG",
+              RFC 7951, DOI 10.17487/RFC7951, August 2016,
+              <https://www.rfc-editor.org/info/rfc7951>.
+
+   [RFC8174]  Leiba, B., "Ambiguity of Uppercase vs Lowercase in RFC
+              2119 Key Words", BCP 14, RFC 8174, DOI 10.17487/RFC8174,
+              May 2017, <https://www.rfc-editor.org/info/rfc8174>.
+
+   [RFC8693]  Jones, M., Nadalin, A., Campbell, B., Ed., Bradley, J.,
+              and C. Mortimore, "OAuth 2.0 Token Exchange", RFC 8693,
+              DOI 10.17487/RFC8693, January 2020,
+              <https://www.rfc-editor.org/info/rfc8693>.
+
+   [SPIFFE-ID]
+              SPIFFE Authors, "SPIFFE ID and Verifiable Identity
+              Document", 2018,
+              <https://github.com/spiffe/spiffe/blob/main/standards/
+              SPIFFE-ID.md>.
+
+   [SPIFFE-X509]
+              SPIFFE Authors, "X.509 SPIFFE Verifiable Identity
+              Document", 2018,
+              <https://github.com/spiffe/spiffe/blob/main/standards/
+              X509-SVID.md>.
+
+9.2.  Informative References
+
+   [I-D.hong-nmrg-agenticai-ps]
+              Hong, "Motivations and Problem Statement of Agentic AI for
+              network management", Work in Progress, Internet-Draft,
+              draft-hong-nmrg-agenticai-ps-00, 2025,
+              <https://datatracker.ietf.org/doc/draft-hong-nmrg-
+              agenticai-ps/>.
+
+   [I-D.ni-a2a-agent-security]
+              Ni, Y., Liu, C., Geng, N., Gao, Q., and Z. Li, "Security
+              Requirements for AI Agents", Work in Progress, Internet-
+              Draft, draft-ni-a2a-ai-agent-security-requirements-00,
+              November 2025, <https://datatracker.ietf.org/doc/draft-ni-
+              a2a-ai-agent-security-requirements/>.
+
+   [I-D.yan-a2a-device-agent-applicability]
+              Yan, J., "Applicability of A2A Protocol for Network
+              Management Agents", Work in Progress, Internet-Draft,
+
+
+
+Song                    Expires 6 September 2026               [Page 15]
+
+Internet-Draft              ANOS Architecture                 March 2026
+
+
+              draft-yan-a2a-device-agent-applicability-00, December
+              2025, <https://datatracker.ietf.org/doc/draft-yan-a2a-
+              device-agent-applicability/>.
+
+   [I-D.yang-nmrg-mcp-nm]
+              Yang, Y., Wu, Q., Lopez, D., Moreno, N., Tailhardat, L.,
+              and G. Zeng, "Applicability of MCP for the Network
+              Management", Work in Progress, Internet-Draft, draft-yang-
+              nmrg-mcp-nm-01, October 2025,
+              <https://datatracker.ietf.org/doc/draft-yang-nmrg-mcp-
+              nm/>.
+
+   [I-D.zeng-mcp-troubleshooting]
+              Zeng, G. and J. Mao, "Using the Model Context Protocol
+              (MCP) for Intent-Based Network Troubleshooting
+              Automation", Work in Progress, Internet-Draft, draft-zeng-
+              mcp-troubleshooting-00, October 2025,
+              <https://datatracker.ietf.org/doc/draft-zm-rtgwg-mcp-
+              troubleshooting/>.
+
+   [I-D.zeng-opsawg-mcp-a2a]
+              Zeng, G., "When NETCONF Is Not Enough: Applicability of
+              MCP and A2A for Advanced Network Management Scenarios",
+              Work in Progress, Internet-Draft, draft-zeng-opsawg-
+              applicability-mcp-a2a-00, 2025,
+              <https://datatracker.ietf.org/doc/draft-zeng-opsawg-
+              applicability-mcp-a2a/>.
+
+   [RFC5277]  Chisholm, S. and H. Trevino, "NETCONF Event
+              Notifications", RFC 5277, DOI 10.17487/RFC5277, July 2008,
+              <https://www.rfc-editor.org/info/rfc5277>.
+
+Author's Address
+
+   Haoyu Song
+   Futurewei Technologies
+   United States of America
+   Email: haoyu.song@futurewei.com
+
+
+
+
+
+
+
+
+
+
+
+
+
+Song                    Expires 6 September 2026               [Page 16]
